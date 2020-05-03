@@ -16,7 +16,6 @@
 import pandas as pd
 import numpy as np
 import re
-import warnings
 
 from IPython.display import display
 from pandas.tseries.offsets import CustomBusinessDay, Day, BusinessDay
@@ -343,39 +342,6 @@ def compute_forward_returns(factor,
     return df
 
 
-def backshift_returns_series(series, N):
-    """Shift a multi-indexed series backwards by N observations in
-    the first level.
-
-    This can be used to convert backward-looking returns into a
-    forward-returns series.
-    """
-    ix = series.index
-    dates, sids = ix.levels
-    date_labels, sid_labels = map(np.array, ix.labels)
-
-    # Output date labels will contain the all but the last N dates.
-    new_dates = dates[:-N]
-
-    # Output data will remove the first M rows, where M is the index of the
-    # last record with one of the first N dates.
-    cutoff = date_labels.searchsorted(N)
-    new_date_labels = date_labels[cutoff:] - N
-    new_sid_labels = sid_labels[cutoff:]
-    new_values = series.values[cutoff:]
-
-    assert new_date_labels[0] == 0
-
-    new_index = pd.MultiIndex(
-        levels=[new_dates, sids],
-        labels=[new_date_labels, new_sid_labels],
-        sortorder=1,
-        names=ix.names,
-    )
-
-    return pd.Series(data=new_values, index=new_index)
-
-
 def demean_forward_returns(factor_data, grouper=None):
     """
     Convert forward returns to returns relative to mean
@@ -448,6 +414,10 @@ def print_table(table, name=None, fmt=None):
 
     if fmt is not None:
         pd.set_option('display.float_format', prev_option)
+
+
+def save_table(table, path):
+    table.to_csv(path, index=True)
 
 
 def get_clean_factor(factor,
@@ -592,7 +562,6 @@ def get_clean_factor(factor,
 
     factor_copy = factor.copy()
     factor_copy.index = factor_copy.index.rename(['date', 'asset'])
-    factor_copy = factor_copy[np.isfinite(factor_copy)]
 
     merged_data = forward_returns.copy()
     merged_data['factor'] = factor_copy
@@ -818,19 +787,11 @@ def get_clean_factor_and_forward_returns(factor,
                       --------------------------------------------------------
                       | LULU  |-0.03| 0.05|-0.009|  2.7 |  G1 |      2
                       --------------------------------------------------------
-
-    See Also
-    --------
-    utils.get_clean_factor
-        For use when forward returns are already available.
     """
-    forward_returns = compute_forward_returns(
-        factor,
-        prices,
-        periods,
-        filter_zscore,
-        cumulative_returns,
-    )
+
+    forward_returns = compute_forward_returns(factor, prices, periods,
+                                              filter_zscore,
+                                              cumulative_returns)
 
     factor_data = get_clean_factor(factor, forward_returns, groupby=groupby,
                                    groupby_labels=groupby_labels,
@@ -895,26 +856,12 @@ def std_conversion(period_std, base_period):
     return period_std / np.sqrt(conversion_factor)
 
 
-def get_forward_returns_columns(columns, require_exact_day_multiple=False):
+def get_forward_returns_columns(columns):
     """
     Utility that detects and returns the columns that are forward returns
     """
-
-    # If exact day multiples are required in the forward return periods,
-    # drop all other columns (e.g. drop 3D12h).
-    if require_exact_day_multiple:
-        pattern = re.compile(r"^(\d+([D]))+$", re.IGNORECASE)
-        valid_columns = [(pattern.match(col) is not None) for col in columns]
-
-        if sum(valid_columns) < len(valid_columns):
-            warnings.warn(
-                "Skipping return periods that aren't exact multiples"
-                + " of days."
-            )
-    else:
-        pattern = re.compile(r"^(\d+([Dhms]|ms|us|ns]))+$", re.IGNORECASE)
-        valid_columns = [(pattern.match(col) is not None) for col in columns]
-
+    pattern = re.compile(r"^(\d+([Dhms]|ms|us|ns))+$", re.IGNORECASE)
+    valid_columns = [(pattern.match(col) is not None) for col in columns]
     return columns[valid_columns]
 
 
@@ -949,23 +896,6 @@ def timedelta_to_string(timedelta):
     if c.nanoseconds > 0:
         format += '%dns' % c.nanoseconds
     return format
-
-
-def timedelta_strings_to_integers(sequence):
-    """
-    Converts pandas string representations of timedeltas into integers of days.
-
-    Parameters
-    ----------
-    sequence : iterable
-        List or array of timedelta string representations, e.g. ['1D', '5D'].
-
-    Returns
-    -------
-    sequence : list
-        Integer days corresponding to the input sequence, e.g. [1, 5].
-    """
-    return list(map(lambda x: pd.Timedelta(x).days, sequence))
 
 
 def add_custom_calendar_timedelta(input, timedelta, freq):
